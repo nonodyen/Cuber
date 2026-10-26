@@ -355,6 +355,18 @@ img { display:block; }
 .mic-btn.rec { background:#ff3d71 !important; color:#fff; animation:micPulse 1s ease-in-out infinite; }
 @keyframes micPulse { 50% { box-shadow:0 0 0 8px rgba(255,61,113,.25); } }
 .voice-msg { width:230px; max-width:100%; height:40px; }
+.call-head-btn { width:40px; height:40px; border:none; border-radius:50%; background:var(--surface2); color:var(--text); cursor:pointer; font-size:18px; margin-left:auto; flex-shrink:0; }
+.call-overlay { position:fixed; inset:0; z-index:300; display:none; align-items:center; justify-content:center; background:radial-gradient(circle at 50% 35%,#2a0f2e,#07060f 70%); }
+.call-overlay.open { display:flex; }
+.co-box { text-align:center; color:#fff; padding:20px; }
+.co-avatar { width:120px; height:120px; border-radius:50%; margin:0 auto 18px; background:linear-gradient(135deg,#ff3d71,#b44cff); display:flex; align-items:center; justify-content:center; font-size:44px; font-weight:700; box-shadow:0 0 30px #ff3d71; }
+.co-name { font-size:26px; font-weight:700; }
+.co-status { color:#9d98c4; margin:8px 0 40px; font-size:15px; }
+.co-actions button { width:72px; height:72px; border-radius:50%; border:none; margin:0 14px; font-size:28px; color:#fff; cursor:pointer; }
+.cs-call-row { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); font-size:16px; color:var(--text); }
+.cs-empty { padding:30px; text-align:center; color:var(--muted); }
+.co-accept { background:#2ecc71; }
+.co-decline { background:#ff3d71; }
 
 /* ===== ПРОФИЛЬ В СТИЛЕ TELEGRAM ===== */
 .profile-modal .profile-content { max-width:380px; padding:0 0 18px !important; border-radius:28px !important; overflow:hidden; position:relative; text-align:center; }
@@ -505,6 +517,7 @@ img { display:block; }
 <button class="back" id="backBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
 <div class="avatar" id="chatAvatar">👤</div>
 <div class="cinfo"><div class="name" id="chatName">Выберите контакт</div><div class="sub" id="chatSub"></div></div>
+<button id="callBtn" class="call-head-btn" title="Позвонить">📞</button>
 </div>
 <div class="messages" id="messages">
 <div class="empty-msg">💬 Выберите контакт слева, чтобы начать чат</div>
@@ -530,7 +543,7 @@ img { display:block; }
 </div>
 <div class="call-screen" id="callScreen">
 <div class="cs-bar"><button id="csClose" type="button">← Назад</button><span>Звонки</span><i style="width:60px"></i></div>
-<div class="cs-body">Телефонные звонки появятся в следующих обновлениях Cuber ☎️</div>
+<div class="cs-body" id="callList"></div>
 </div>
 <div class="call-screen" id="chSetScreen">
 <div class="cs-bar"><button id="chSetBack" type="button">← Назад</button><span id="chSetTitle">Канал</span><i style="width:60px"></i></div>
@@ -543,6 +556,17 @@ img { display:block; }
 <button class="tab" data-tab="profile" title="Профиль"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button>
 <button class="tab" id="menuBtn" title="Поиск"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
 </nav>
+
+<!-- ЭКРАН ЗВОНКА -->
+<div class="call-overlay" id="callOverlay">
+<div class="co-box">
+<div class="co-avatar" id="coAvatar">👤</div>
+<div class="co-name" id="coName"></div>
+<div class="co-status" id="coStatus"></div>
+<div class="co-actions" id="coActions"></div>
+</div>
+<audio id="callAudio" autoplay></audio>
+</div>
 
 <!-- МОДАЛКИ -->
 <div class="modal" id="modal">
@@ -758,6 +782,185 @@ await db.functions.invoke('send-push', { body: { to: toId, title: '@' + me, body
 } catch (e) {}
 }
 
+// ===== ГОЛОСОВЫЕ ЗВОНКИ (один на один, WebRTC) =====
+const RTC_CONF = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+let callPeerId = null, callPeerName = '', callPc = null, callStream = null;
+let callIceQueue = [], callRingTimer = null, callPendingSdp = null;
+const sigChans = {};
+
+// Канал сигналов собеседника: одна подписка на каждого
+function signalChannel(id) {
+  if (!sigChans[id]) {
+    const ch = db.channel('call-' + id);
+    sigChans[id] = new Promise((res) => ch.subscribe((st) => { if (st === 'SUBSCRIBED') res(ch); }));
+  }
+  return sigChans[id];
+}
+async function sendTo(id, event, payload) {
+  const ch = await signalChannel(String(id));
+  ch.send({ type: 'broadcast', event: event, payload: Object.assign({ from: String(uid()) }, payload) });
+}
+function sendSignal(event, payload) { return sendTo(callPeerId, event, payload); }
+
+// Слушаем звонки, адресованные мне
+function startCallListener() {
+  const me = uid();
+  if (!me) return;
+  db.channel('call-' + me)
+    .on('broadcast', { event: 'invite' }, ({ payload }) => onInvite(payload))
+    .on('broadcast', { event: 'answer' }, ({ payload }) => onAnswer(payload))
+    .on('broadcast', { event: 'ice' }, ({ payload }) => onIce(payload))
+    .on('broadcast', { event: 'end' }, ({ payload }) => onRemoteEnd(payload))
+    .subscribe();
+}
+
+function makePc() {
+  const pc = new RTCPeerConnection(RTC_CONF);
+  pc.onicecandidate = (e) => { if (e.candidate && callPeerId) sendSignal('ice', { candidate: e.candidate }); };
+  pc.ontrack = (e) => { const a = document.getElementById('callAudio'); a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') callStatus('Разговор');
+    if (pc.connectionState === 'failed') endCall(true, 'Связь прервалась');
+  };
+  return pc;
+}
+
+function callShow(name, status, buttons) {
+  document.getElementById('coName').textContent = name || '';
+  document.getElementById('coAvatar').textContent = (name || '?').charAt(0).toUpperCase();
+  callStatus(status);
+  const box = document.getElementById('coActions');
+  box.innerHTML = '';
+  buttons.forEach((b) => {
+    const btn = document.createElement('button');
+    btn.className = b.cls;
+    btn.textContent = b.icon;
+    btn.addEventListener('click', b.fn);
+    box.appendChild(btn);
+  });
+  document.getElementById('callOverlay').classList.add('open');
+}
+function callStatus(t) { document.getElementById('coStatus').textContent = t; }
+function callHide() { document.getElementById('callOverlay').classList.remove('open'); }
+
+function flushIce() {
+  callIceQueue.splice(0).forEach((c) => callPc.addIceCandidate(c).catch(() => {}));
+}
+
+// Исходящий звонок
+async function startCall() {
+  if (!currentContactId) { flash('Открой чат с человеком'); return; }
+  startCallTo(currentContactId, currentContact);
+}
+// Список контактов во вкладке «Звонки»
+async function renderCallList() {
+  const body = document.getElementById('callList');
+  body.innerHTML = '<div class="cs-empty">Загрузка...</div>';
+  const me = String(uid());
+  const { data: cs } = await db.from('contacts').select('contact_id').eq('user_id', me);
+  const ids = (cs || []).map((c) => String(c.contact_id));
+  if (!ids.length) { body.innerHTML = '<div class="cs-empty">Добавь контакты, чтобы звонить</div>'; return; }
+  const { data: us } = await db.from('users').select('id, username, name').in('id', ids);
+  body.innerHTML = '';
+  (us || []).forEach((u) => {
+    const row = document.createElement('div');
+    row.className = 'cs-call-row';
+    const nm = document.createElement('span');
+    nm.textContent = u.name || u.username;
+    const btn = document.createElement('button');
+    btn.className = 'call-head-btn';
+    btn.textContent = '📞';
+    btn.addEventListener('click', () => {
+      document.getElementById('callScreen').classList.remove('open');
+      startCallTo(String(u.id), u.name || u.username);
+    });
+    row.appendChild(nm);
+    row.appendChild(btn);
+    body.appendChild(row);
+  });
+}
+async function startCallTo(id, name) {
+  if (callPeerId) return;
+  callPeerId = String(id);
+  callPeerName = name || '';
+  try {
+    callStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { alert('Нет доступа к микрофону'); callPeerId = null; return; }
+  callPc = makePc();
+  callStream.getTracks().forEach((t) => callPc.addTrack(t, callStream));
+  callShow(callPeerName, 'Звоним...', [{ cls: 'co-decline', icon: '✖', fn: () => endCall(true) }]);
+  const me = await getMyUsername();
+  const offer = await callPc.createOffer();
+  await callPc.setLocalDescription(offer);
+  await sendSignal('invite', { fromName: me, sdp: offer });
+  callRingTimer = setTimeout(() => {
+    if (callPc && callPc.connectionState !== 'connected') endCall(true, 'Нет ответа');
+  }, 30000);
+}
+
+// Входящий звонок
+function onInvite(p) {
+  if (callPeerId) { sendTo(p.from, 'end', {}); return; } // занят
+  callPeerId = String(p.from);
+  callPeerName = p.fromName || 'Собеседник';
+  callPendingSdp = p.sdp;
+  callShow(callPeerName, 'Входящий звонок', [
+    { cls: 'co-accept', icon: '✔', fn: acceptCall },
+    { cls: 'co-decline', icon: '✖', fn: () => endCall(true) }
+  ]);
+  if (navigator.vibrate) navigator.vibrate([400, 200, 400]);
+  callRingTimer = setTimeout(() => { if (!callPc) endCall(true, 'Пропущенный звонок'); }, 30000);
+}
+
+async function acceptCall() {
+  try {
+    callStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { alert('Нет доступа к микрофону'); endCall(true); return; }
+  clearTimeout(callRingTimer);
+  callPc = makePc();
+  callStream.getTracks().forEach((t) => callPc.addTrack(t, callStream));
+  await callPc.setRemoteDescription(callPendingSdp);
+  flushIce();
+  const answer = await callPc.createAnswer();
+  await callPc.setLocalDescription(answer);
+  await sendSignal('answer', { sdp: answer });
+  callShow(callPeerName, 'Разговор', [{ cls: 'co-decline', icon: '✖', fn: () => endCall(true) }]);
+}
+
+async function onAnswer(p) {
+  if (!callPc || String(p.from) !== callPeerId) return;
+  clearTimeout(callRingTimer);
+  await callPc.setRemoteDescription(p.sdp);
+  flushIce();
+  callStatus('Соединяем...');
+}
+
+function onIce(p) {
+  if (!callPeerId || String(p.from) !== callPeerId) return;
+  if (!callPc || !callPc.remoteDescription) { callIceQueue.push(p.candidate); return; }
+  callPc.addIceCandidate(p.candidate).catch(() => {});
+}
+
+function onRemoteEnd(p) {
+  if (!callPeerId || String(p.from) !== callPeerId) return;
+  endCall(false, 'Звонок завершён');
+}
+
+function endCall(notify, msg) {
+  if (notify && callPeerId) sendTo(callPeerId, 'end', {}).catch(() => {});
+  clearTimeout(callRingTimer);
+  if (callPc) { callPc.close(); callPc = null; }
+  if (callStream) { callStream.getTracks().forEach((t) => t.stop()); callStream = null; }
+  const a = document.getElementById('callAudio');
+  if (a) a.srcObject = null;
+  callPeerId = null;
+  callPendingSdp = null;
+  callIceQueue = [];
+  if (msg) { callStatus(msg); setTimeout(callHide, 1200); }
+  else callHide();
+}
+document.getElementById('callBtn').addEventListener('click', startCall);
+
 // ===== ОНЛАЙН-СТАТУС =====
 async function setOnline(flag) {
 const id = uid();
@@ -898,6 +1101,7 @@ startHeartbeat();
 startRealtime();
 setOnline(true).then(renderContacts);
 enablePush();
+startCallListener();
 statusDiv.textContent = '';
 }
 
@@ -2628,7 +2832,7 @@ checkSession();
       tabs.forEach(function(x){ x.classList.toggle('on', x===b); });
       var t=b.getAttribute('data-tab');
       if (t==='settings') { e.stopPropagation(); updateMenu(); var md=document.getElementById('menuDropdown'); if (md) md.classList.toggle('active'); }
-      else if (t==='calls') { document.getElementById('callScreen').classList.add('open'); }
+      else if (t==='calls') { document.getElementById('callScreen').classList.add('open'); renderCallList(); }
       else if (t==='chat') {
         document.getElementById('callScreen').classList.remove('open');
         document.getElementById('menuDropdown').classList.remove('active');
