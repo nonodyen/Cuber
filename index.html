@@ -352,6 +352,9 @@ img { display:block; }
 .tab { width:56px; height:56px; border-radius:50%; border:none; background:#1c1a2e; color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:none; }
 .tab svg { width:24px; height:24px; }
 .tab.on { background:linear-gradient(135deg,#ff3d71,#b44cff); }
+.mic-btn.rec { background:#ff3d71 !important; color:#fff; animation:micPulse 1s ease-in-out infinite; }
+@keyframes micPulse { 50% { box-shadow:0 0 0 8px rgba(255,61,113,.25); } }
+.voice-msg { width:230px; max-width:100%; height:40px; }
 
 /* ===== ПРОФИЛЬ В СТИЛЕ TELEGRAM ===== */
 .profile-modal .profile-content { max-width:380px; padding:0 0 18px !important; border-radius:28px !important; overflow:hidden; position:relative; text-align:center; }
@@ -511,6 +514,7 @@ img { display:block; }
 <input type="file" id="wallInput" accept="image/*,video/*" hidden>
 <div class="reply-bar" id="replyBar"><div class="rb-text"><b id="rbAuthor"></b><span id="rbText"></span></div><button id="rbClose" type="button" title="Отменить ответ">✕</button></div>
 <div class="input-area">
+<button id="micBtn" class="sticker-btn mic-btn" title="Голосовое"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
 <button id="stickerBtn" class="sticker-btn" title="Стикеры"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.4 2.2 2 3.5 2s2.5-.6 3.5-2"/><circle cx="9" cy="10" r="0.8" fill="currentColor"/><circle cx="15" cy="10" r="0.8" fill="currentColor"/></svg></button>
 <input type="text" id="input" placeholder="Введите сообщение..." disabled />
 <button id="sendBtn" disabled title="Отправить"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4l17.5-7.7c.8-.4.8-1.5 0-1.9L3.4 3.1c-.7-.3-1.4.4-1.1 1.1L4.9 11l8.2 1-8.2 1-2.6 6.8c-.3.7.4 1.4 1.1 1.1z"/></svg></button>
@@ -728,6 +732,32 @@ applyTheme(document.body.classList.contains('dark') ? 'light' : 'dark');
 });
 applyTheme(localStorage.getItem('neobee_theme') || 'dark');
 
+// ===== ПУШ-УВЕДОМЛЕНИЯ (работают при закрытом приложении) =====
+const VAPID_PUBLIC = 'BOIu0W-eJlc8iOBBp461mUj3-6pwV77XZQg8r96kqiE8PBcHe6Hw9E1K4MD_G5wr8MIIDqVq0ptOV2RwcIJnArI';
+function urlB64ToUint8(b64) {
+const pad = '='.repeat((4 - b64.length % 4) % 4);
+const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+// Сохраняем подписку устройства в базе, чтобы сервер мог отправить пуш
+async function enablePush() {
+try {
+if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+if (Notification.permission !== 'granted') return;
+const reg = await navigator.serviceWorker.ready;
+let sub = await reg.pushManager.getSubscription();
+if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(VAPID_PUBLIC) });
+await db.from('push_subs').upsert({ endpoint: sub.endpoint, user_id: uid(), sub: sub.toJSON() }, { onConflict: 'endpoint' });
+} catch (e) { /* пуши не обязательны для работы чата */ }
+}
+// Просим сервер отправить пуш получателю (без ожидания ответа)
+async function notifyPush(toId, text) {
+try {
+const me = await getMyUsername();
+await db.functions.invoke('send-push', { body: { to: toId, title: '@' + me, body: text.slice(0, 120) } });
+} catch (e) {}
+}
+
 // ===== ОНЛАЙН-СТАТУС =====
 async function setOnline(flag) {
 const id = uid();
@@ -867,6 +897,7 @@ loadOwnProfile();
 startHeartbeat();
 startRealtime();
 setOnline(true).then(renderContacts);
+enablePush();
 statusDiv.textContent = '';
 }
 
@@ -1287,7 +1318,7 @@ async function notifyIncoming(m) {
     if (data && data.username) name = data.username;
     if (data && data.avatar) avatar = data.avatar;
   } catch (e) {}
-  const preview = STICKER_RE.test(m.text) ? '💗 Стикер' : m.text;
+  const preview = previewOf(m.text);
   showBanner(name, preview, from, avatar);
   if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
     const opts = { body: preview, tag: from, icon: 'neobee_icon.png', badge: 'neobee_icon.png' };
@@ -1494,6 +1525,53 @@ async function sendSticker(id) {
   saveDraft(currentContact, draft);
 }
 
+// ===== ГОЛОСОВЫЕ СООБЩЕНИЯ =====
+const VOICE_PREFIX = 'VOICE::';
+function isVoice(t) { return typeof t === 'string' && t.startsWith(VOICE_PREFIX); }
+function previewOf(t) {
+  if (STICKER_RE.test(t)) return '💗 Стикер';
+  if (isVoice(t)) return '🎤 Голосовое';
+  return t;
+}
+let voiceRec = null, voiceChunks = [], voiceStream = null;
+async function toggleVoice() {
+  if (voiceRec && voiceRec.state === 'recording') { voiceRec.stop(); return; }
+  if (!currentContactId && !currentChannel) { flash('Сначала открой чат'); return; }
+  try {
+    voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) { alert('Нет доступа к микрофону'); return; }
+  voiceChunks = [];
+  voiceRec = new MediaRecorder(voiceStream);
+  voiceRec.ondataavailable = (e) => { if (e.data && e.data.size) voiceChunks.push(e.data); };
+  voiceRec.onstop = sendVoice;
+  voiceRec.start();
+  document.getElementById('micBtn').classList.add('rec');
+  flash('🎙 Запись... нажми ещё раз, чтобы отправить');
+}
+async function sendVoice() {
+  document.getElementById('micBtn').classList.remove('rec');
+  voiceStream.getTracks().forEach(t => t.stop());
+  const blob = new Blob(voiceChunks, { type: voiceRec.mimeType || 'audio/webm' });
+  if (blob.size < 1000) { flash('Слишком короткая запись'); return; }
+  try {
+    const path = uid() + '/' + Date.now() + '.webm';
+    const { error: upErr } = await db.storage.from('voice').upload(path, blob, { contentType: blob.type });
+    if (upErr) { alert('Не удалось загрузить голосовое: ' + upErr.message); return; }
+    const { data: pu } = db.storage.from('voice').getPublicUrl(path);
+    const text = VOICE_PREFIX + pu.publicUrl;
+    if (currentContactId) {
+      const { error } = await db.from('messages').insert({ sender_id: String(uid()), receiver_id: currentContactId, text: text });
+      if (error) { alert('Не удалось отправить: ' + error.message); return; }
+      lastRenderedKey = '';
+      await refreshChat();
+    } else if (currentChannel) {
+      const { error } = await db.from('messages').insert({ sender_id: String(uid()), receiver_id: currentChannel.user_id, channel_id: String(currentChannel.id), text: text });
+      if (error) { alert('Не удалось отправить: ' + error.message); return; }
+      await loadChannelMessages();
+    }
+  } catch (e) { alert('Ошибка голосового: ' + e.message); }
+}
+
 function buildMessageEl(text, isMe, timestamp, id, read, reply) {
 const div = document.createElement('div');
 const sm = STICKER_RE.exec(text);
@@ -1516,7 +1594,16 @@ if (sm && STICKER_SVG[sm[1]]) {
     q.appendChild(tx);
     div.appendChild(q);
   }
-  div.appendChild(document.createTextNode(text));
+  if (isVoice(text)) {
+    const au = document.createElement('audio');
+    au.controls = true;
+    au.preload = 'metadata';
+    au.className = 'voice-msg';
+    au.src = text.slice(VOICE_PREFIX.length);
+    div.appendChild(au);
+  } else {
+    div.appendChild(document.createTextNode(text));
+  }
 }
 if (id != null) div.dataset.id = String(id);
 const time = document.createElement('span');
@@ -1586,6 +1673,7 @@ return;
 }
 lastRenderedKey = '';
 await refreshChat();
+notifyPush(other, text);
 flash('✅ Сообщение отправлено');
 return;
 }
@@ -1607,6 +1695,7 @@ flash('✅ Сообщение сохранено');
 
 // Раньше у кнопки ➤ не было обработчика клика — она ничего не делала
 sendBtn.addEventListener('click', sendMessage);
+document.getElementById('micBtn').addEventListener('click', toggleVoice);
 input.addEventListener('keydown', (e) => {
 if (e.key === 'Enter') sendMessage();
 });
@@ -1750,7 +1839,7 @@ const avHtml = u && u.avatar ? '<img src="' + esc(u.avatar) + '">' : esc(firstCh
 const online = isUserOnline(u);
 const pv = lastMap[String(c.contact_id)];
 const subText = pv
-? (pv.mine ? 'Вы: ' : '') + (STICKER_RE.test(pv.text) ? '💗 Стикер' : pv.text)
+? (pv.mine ? 'Вы: ' : '') + previewOf(pv.text)
 : (online ? 'в сети' : lastSeenText(u && u.last_seen));
 const dotHTML = online
 ? '<span class="online-dot" title="В сети"></span>'
