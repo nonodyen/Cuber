@@ -363,6 +363,9 @@ img { display:block; }
 .co-name { font-size:26px; font-weight:700; }
 .co-status { color:#9d98c4; margin:8px 0 40px; font-size:15px; }
 .co-actions button { width:72px; height:72px; border-radius:50%; border:none; margin:0 14px; font-size:28px; color:#fff; cursor:pointer; }
+#chatBadge { font-size:15px; margin-left:4px; }
+.dev-select { width:100%; margin-top:10px; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--surface2); color:var(--text); font-size:15px; }
+.dev-ban { width:100%; margin-top:14px; padding:12px; border-radius:12px; border:none; background:#ff3d71; color:#fff; font-weight:700; cursor:pointer; }
 .cs-call-row { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); font-size:16px; color:var(--text); }
 .cs-empty { padding:30px; text-align:center; color:var(--muted); }
 .co-accept { background:#2ecc71; }
@@ -505,6 +508,7 @@ img { display:block; }
 <button id="menuProfileBtn"><span class="icon">👤</span> Профиль</button>
 <button id="menuChannelBtn"><span class="icon">📢</span> Создать канал</button>
 <button id="menuManageChannelsBtn" style="display:none;"><span class="icon">⚙️</span> Управление каналами</button>
+<button id="menuDevBtn" style="display:none;"><span class="icon">🛠</span> Разработчик</button>
 <button id="menuLeaveChannelBtn" style="display:none;"><span class="icon">🚪</span> Выйти из канала</button>
 </div>
 <div class="main-area" id="mainArea">
@@ -516,7 +520,7 @@ img { display:block; }
 <div class="chat-header hidden">
 <button class="back" id="backBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
 <div class="avatar" id="chatAvatar">👤</div>
-<div class="cinfo"><div class="name" id="chatName">Выберите контакт</div><div class="sub" id="chatSub"></div></div>
+<div class="cinfo"><div class="name"><span id="chatName">Выберите контакт</span><span id="chatBadge"></span></div><div class="sub" id="chatSub"></div></div>
 <button id="callBtn" class="call-head-btn" title="Позвонить">📞</button>
 </div>
 <div class="messages" id="messages">
@@ -556,6 +560,26 @@ img { display:block; }
 <button class="tab" data-tab="profile" title="Профиль"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></button>
 <button class="tab" id="menuBtn" title="Поиск"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
 </nav>
+
+<!-- РАЗРАБОТЧИК -->
+<div class="modal" id="devModal">
+<div class="modal-content">
+<h2>🛠 Разработчик</h2>
+<p>Выдача подписок и бан</p>
+<input type="text" id="devUser" placeholder="Никнейм, например ivan12">
+<select id="devPlan" class="dev-select">
+<option value="">Без подписки</option>
+<option value="cuber">Cuber 🤖</option>
+<option value="premium">Premium 👑</option>
+</select>
+<div class="error" id="devMsg"></div>
+<div class="modal-actions">
+<button class="cancel" id="devClose">Закрыть</button>
+<button id="devGrant">Выдать</button>
+</div>
+<button id="devBan" class="dev-ban">Забанить (удалить аккаунт)</button>
+</div>
+</div>
 
 <!-- ЭКРАН ЗВОНКА -->
 <div class="call-overlay" id="callOverlay">
@@ -961,6 +985,46 @@ function endCall(notify, msg) {
 }
 document.getElementById('callBtn').addEventListener('click', startCall);
 
+// ===== ПОДПИСКИ: значки и раздел «Разработчик» =====
+const PLAN_BADGE = { cuber: ' 🤖', premium: ' 👑' };
+async function showBadge(userId) {
+  const el = document.getElementById('chatBadge');
+  el.textContent = '';
+  if (!userId) return;
+  const { data } = await db.from('users').select('plan').eq('id', String(userId)).maybeSingle();
+  if (String(currentContactId) !== String(userId)) return; // чат уже сменился
+  if (data && PLAN_BADGE[data.plan]) el.textContent = PLAN_BADGE[data.plan];
+}
+
+
+document.getElementById('menuDevBtn').addEventListener('click', () => {
+  menuDropdown.classList.remove('active');
+  document.getElementById('devModal').classList.add('active');
+});
+document.getElementById('devClose').addEventListener('click', () => {
+  document.getElementById('devModal').classList.remove('active');
+});
+async function devCall(body) {
+  const msg = document.getElementById('devMsg');
+  msg.textContent = 'Выполняю...';
+  const { data, error } = await db.functions.invoke('admin', { body: body });
+  if (error) msg.textContent = 'Ошибка: ' + error.message;
+  else if (data && data.ok) msg.textContent = 'Готово';
+  else msg.textContent = 'Ошибка: ' + ((data && data.error) || 'неизвестно');
+}
+document.getElementById('devGrant').addEventListener('click', () => {
+  const username = document.getElementById('devUser').value.trim().replace(/^@/, '');
+  const plan = document.getElementById('devPlan').value || null;
+  if (!username) { document.getElementById('devMsg').textContent = 'Введи никнейм'; return; }
+  devCall({ action: 'grant', username: username, plan: plan });
+});
+document.getElementById('devBan').addEventListener('click', () => {
+  const username = document.getElementById('devUser').value.trim().replace(/^@/, '');
+  if (!username) { document.getElementById('devMsg').textContent = 'Введи никнейм'; return; }
+  if (!confirm('Удалить аккаунт @' + username + ' навсегда?')) return;
+  devCall({ action: 'ban', username: username });
+});
+
 // ===== ОНЛАЙН-СТАТУС =====
 async function setOnline(flag) {
 const id = uid();
@@ -1116,7 +1180,8 @@ async function updateMenu() {
 const channels = await loadChannelsFromCloud();
 const uname0 = await getMyUsername();
 menuManageChannelsBtn.style.display = channels.some(c => isOwner(c) || (c.admins || []).includes(uname0)) ? 'block' : 'none';
-}
+// Вкладка разработчика видна только владельцу (окончательная проверка — на сервере)
+document.getElementById('menuDevBtn').style.display = uname0 === 'ivan12' ? 'block' : 'none';}
 
 menuBtn.addEventListener('click', (e) => {
 e.stopPropagation();
@@ -2490,6 +2555,7 @@ currentContactId = userId || null;
 if (userId) { clearUnread(String(userId)); updateTitle(); }
 document.querySelector('.chat-header').classList.remove('hidden');
 chatName.textContent = contact;
+showBadge(userId);
 setChatAvatar(contact, userId);
 $('chatSub').textContent = userId ? '' : (channel ? 'Канал · ' + (cleanMembers(channel.members).length + 1) + ' подп.' : 'Канал');
 updateChatSub();
