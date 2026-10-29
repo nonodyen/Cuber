@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Pulse</title>
+<title>Cuber</title>
 <link rel="icon" href="neobee_icon.png" type="image/png">
 <link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -458,6 +458,21 @@ img { display:block; }
   .menu-dropdown.active .ms-bar button { width:auto; padding:6px 0; color:#5ea9e5; font-size:16px; background:none; }
   .menu-dropdown.active button { font-size:18px; padding:16px 20px; border-radius:0; }
 }
+/* ===== ГЛАВНЫЙ ЭКРАН КАК В МАКЕТЕ ===== */
+.fake-search { display:flex; align-items:center; gap:8px; margin:6px 6px 12px; padding:12px 14px; border-radius:14px; background:var(--surface2); color:var(--muted); font-size:14px; cursor:pointer; }
+.row-meta { display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex-shrink:0; }
+.row-time { font-size:12px; color:var(--muted); }
+.tlabel { font-size:11px; line-height:1; }
+@media (max-width: 768px) {
+  .tabbar .tab[data-tab="settings"] { display:none !important; }
+  .tabbar .tab { width:auto !important; height:auto !important; border-radius:0 !important; background:none !important; color:var(--muted) !important; flex-direction:column; gap:4px; padding:6px 4px; }
+  .tabbar .tab.on { background:none !important; color:#7c6cff !important; }
+  .tabbar .tab[data-tab="chat"] { order:1; }
+  .tabbar #menuBtn { order:2; }
+  .tabbar .tab[data-tab="calls"] { order:3; }
+  .tabbar .tab[data-tab="profile"] { order:4; }
+  .tabbar { padding:0 12px calc(env(safe-area-inset-bottom) + 8px) !important; justify-content:space-between !important; }
+}
 </style>
 </head>
 <body class="dark">
@@ -468,7 +483,7 @@ img { display:block; }
 <div class="auth-screen" id="authScreen">
 <div class="auth-box">
 <div class="logo">💓</div>
-<h1>Pulse</h1>
+<h1>Cuber</h1>
 <p id="authSubtitle">Войдите по никнейму</p>
 <input type="text" id="authUsername" placeholder="👤 Никнейм" autocomplete="username">
 <input type="password" id="authPassword" placeholder="Пароль" autocomplete="current-password">
@@ -485,9 +500,10 @@ img { display:block; }
 <div class="header">
 <div class="header-left">
 <img src="neobee_icon.png" alt="Pulse" id="avatarImg">
-<h1>Pulse</h1>
+<h1>Cuber</h1>
 </div>
 <div class="header-right">
+<button class="theme-btn" id="settingsBtn" title="Настройки"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
 <button class="add-btn" id="addContactBtn" title="Добавить" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
 </div>
 </div>
@@ -1599,10 +1615,19 @@ const UNREAD_KEY = 'neobee_unread';
 function getUnread() { try { return JSON.parse(localStorage.getItem(UNREAD_KEY) || '{}'); } catch (e) { return {}; } }
 function setUnread(o) { try { localStorage.setItem(UNREAD_KEY, JSON.stringify(o)); } catch (e) {} }
 function clearUnread(id) { const o = getUnread(); if (o[id]) { delete o[id]; setUnread(o); } }
+function fmtListTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Вчера';
+  return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+}
 function unreadBadge(id) { const n = getUnread()[String(id)]; return n ? '<span class="unread-badge">' + (n > 99 ? '99+' : n) + '</span>' : ''; }
 function updateTitle() {
   const total = Object.values(getUnread()).reduce((a, b) => a + b, 0);
-  document.title = total ? '(' + total + ') Pulse' : 'Pulse';
+  document.title = total ? '(' + total + ') Cuber' : 'Cuber';
 }
 let bannerTimer = null;
 function showBanner(name, preview, id, avatar) {
@@ -2123,7 +2148,7 @@ const map = {};
 const mine = String(m.sender_id) === me;
 const other = mine ? String(m.receiver_id) : String(m.sender_id);
 if (clearedMap[other] && new Date(m.created_at) <= new Date(clearedMap[other])) return;
-if (!map[other]) map[other] = { text: m.text, mine: mine };
+if (!map[other]) map[other] = { text: m.text, mine: mine, t: m.created_at };
 });
 return map;
 } catch (e) { return {}; }
@@ -2204,6 +2229,8 @@ updateChatSub();
 updateTitle();
 
 contactList.innerHTML = '';
+contactList.insertAdjacentHTML('beforeend', '<div class="fake-search" id="fakeSearch">🔍 Поиск по чатам, людям, сообщениям…</div>');
+document.getElementById('fakeSearch').addEventListener('click', () => document.getElementById('menuBtn').click());
 contactList.appendChild(await buildStoriesStrip());
 
 if (channels.length > 0) {
@@ -2261,7 +2288,7 @@ div.innerHTML = `
 <div class="name">${esc(displayName)}${dotHTML}</div>
 <div class="username">${esc(subText)}</div>
 </div>
-${unreadBadge(c.contact_id)}<button class="msg-btn" title="Написать">💬</button>`;
+<div class="row-meta"><span class="row-time">${esc(fmtListTime(pv && pv.t))}</span>${unreadBadge(c.contact_id)}</div><button class="msg-btn" title="Написать">💬</button>`;
 div.style.cursor = 'pointer';
 div.addEventListener('click', () => openChat(displayName, String(c.contact_id)));
 div.querySelector('.msg-btn').addEventListener('click', (e) => {
@@ -3091,6 +3118,15 @@ checkSession();
   var sBtn=document.getElementById('menuBtn');
   if (sBtn) sBtn.addEventListener('click', function(e){ e.stopImmediatePropagation(); e.preventDefault(); openSearch(); }, true);
 
+  // Подписи нижней панели: Чаты · Контакты · Звонки · Профиль
+  document.querySelectorAll('.tabbar .tab').forEach(function(b){
+    var l = ({chat:'Чаты', calls:'Звонки', profile:'Профиль'})[b.getAttribute('data-tab')] || (b.id==='menuBtn' ? 'Контакты' : '');
+    if (l) b.insertAdjacentHTML('beforeend', '<span class="tlabel">'+l+'</span>');
+  });
+  // Настройки теперь в шапке (кнопка ⚙️)
+  document.getElementById('settingsBtn').addEventListener('click', function(e){
+    e.stopPropagation(); updateMenu(); document.getElementById('menuDropdown').classList.toggle('active');
+  });
   var tabs=document.querySelectorAll('.tab');
   tabs.forEach(function(b){
     b.addEventListener('click', function(e){
@@ -3150,7 +3186,7 @@ async function loadStories() {
 async function buildStoriesStrip() {
   const wrap = document.createElement('div');
   wrap.className = 'stories-strip';
-  wrap.innerHTML = '<button class="st-item" id="stAdd"><div class="st-ring add"><div class="st-av">+</div></div><span class="st-name">Моя история</span></button>';
+  wrap.innerHTML = '<button class="st-item" id="stAdd"><div class="st-ring add"><div class="st-av">+</div></div><span class="st-name">Ваша история</span></button>';
   const stories = await loadStories();
   const groups = {};
   stories.forEach(s => { const k = String(s.owner_id); (groups[k] = groups[k] || []).push(s); });
