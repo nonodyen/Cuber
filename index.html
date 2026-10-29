@@ -3124,6 +3124,24 @@ function renderSubInfo(plan) {
     : 'У вас куплена подписка: ' + names[0];
   el.style.display = 'block';
 }
+// Загрузка подписки и ника при любом открытии профиля (и из меню, и из нижней вкладки)
+async function loadSubInfo() {
+  if (!myId) return;
+  try {
+    const { data } = await db.from('users').select('username, plan').eq('id', String(myId)).maybeSingle();
+    if (!data) return;
+    const f = document.getElementById('profileUser');
+    if (f) f.value = '@' + data.username;
+    renderSubInfo(data.plan);
+  } catch (e) {}
+}
+(function () {
+  const pm = document.getElementById('profileModal');
+  if (!pm) return;
+  new MutationObserver(() => {
+    if (pm.classList.contains('active')) loadSubInfo();
+  }).observe(pm, { attributes: true, attributeFilter: ['class'] });
+})();
 function nextStory() { viewIdx++; showStory(); }
 function prevStory() { viewIdx = Math.max(0, viewIdx - 1); showStory(); }
 document.getElementById('storyClose').onclick = closeStories;
