@@ -195,6 +195,9 @@ img { display:block; }
 .sticker-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; max-height:230px; overflow-y:auto; transition:opacity .2s ease; }
 .sticker-grid.fading { opacity:0; }
 .sticker-item { border:none; background:transparent; padding:4px; border-radius:14px; cursor:pointer; }
+.cs-img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:14px; display:block; }
+.cs-img.big { width:150px; height:150px; aspect-ratio:auto; }
+.cs-add { width:100%; aspect-ratio:1; border-radius:14px; border:2px dashed var(--muted); display:flex; align-items:center; justify-content:center; font-size:34px; color:var(--muted); box-sizing:border-box; }
 .sticker-item:active { background:var(--surface); }
 .sticker-item svg { width:100%; height:auto; display:block; }
 .msg.sticker-msg, .msg.sticker-msg.me { background:none; box-shadow:none; padding:0 0 4px; }
@@ -1754,11 +1757,17 @@ PACKS.push({ name: 'Хакеры', hack: true, items: [
 const STICKER_SVG = {};
 PACKS.forEach(p => p.items.forEach(it => { STICKER_SVG[it.id] = (p.hack ? hackSvg : beeSvg)(it); }));
 const STICKER_RE = /^\[\[sticker:([\w-]+)\]\]$/;
+const CUSTOM_RE = /^\[\[cs:(https:\/\/[^\s\]]+)\]\]$/;
 
 const stickerPanel = $('stickerPanel'), stickerTabs = $('stickerTabs'), stickerGrid = $('stickerGrid'), stickerBtn = $('stickerBtn');
 let activePack = 0;
 function renderStickerPanel() {
-  stickerTabs.innerHTML = PACKS.map((p, i) => `<button class="sticker-tab${i === activePack ? ' on' : ''}" data-i="${i}">${p.name}</button>`).join('');
+  const names = PACKS.map(p => p.name).concat([CUSTOM_TAB]);
+  stickerTabs.innerHTML = names.map((n, i) => `<button class="sticker-tab${i === activePack ? ' on' : ''}" data-i="${i}">${n}</button>`).join('');
+  renderStickerGrid();
+}
+function renderStickerGrid() {
+  if (activePack === PACKS.length) { renderCustomGrid(); return; }
   stickerGrid.innerHTML = PACKS[activePack].items.map(it => `<button class="sticker-item" data-id="${it.id}">${STICKER_SVG[it.id]}</button>`).join('');
 }
 let switchTimer = null;
@@ -1770,12 +1779,18 @@ stickerTabs.addEventListener('click', e => {
   stickerGrid.classList.add('fading');
   clearTimeout(switchTimer);
   switchTimer = setTimeout(() => {
-    stickerGrid.innerHTML = PACKS[activePack].items.map(it => `<button class="sticker-item" data-id="${it.id}">${STICKER_SVG[it.id]}</button>`).join('');
+    renderStickerGrid();
     stickerGrid.scrollTop = 0;
     requestAnimationFrame(() => stickerGrid.classList.remove('fading'));
   }, 200);
 });
-stickerGrid.addEventListener('click', e => { const b = e.target.closest('.sticker-item'); if (b) sendSticker(b.dataset.id); });
+stickerGrid.addEventListener('click', e => {
+  if (e.target.closest('.custom-add')) { openStickerMaker(); return; }
+  const cu = e.target.closest('.custom-item');
+  if (cu) { sendRaw(`[[cs:${cu.dataset.url}]]`); return; }
+  const b = e.target.closest('.sticker-item');
+  if (b) sendSticker(b.dataset.id);
+});
 stickerBtn.addEventListener('click', () => {
   if (!currentContact) { flash('Сначала выберите чат'); return; }
   const open = stickerPanel.classList.toggle('open');
@@ -1784,21 +1799,89 @@ stickerBtn.addEventListener('click', () => {
 document.addEventListener('click', e => {
   if (!stickerPanel.contains(e.target) && !stickerBtn.contains(e.target)) stickerPanel.classList.remove('open');
 });
-async function sendSticker(id) {
+function sendSticker(id) { return sendRaw(`[[sticker:${id}]]`); }
+async function sendRaw(code) {
   if (!currentContact) return;
   stickerPanel.classList.remove('open');
   const draft = input.value;
-  input.value = `[[sticker:${id}]]`;
+  input.value = code;
   await sendMessage();
   input.value = draft;
   saveDraft(currentContact, draft);
+}
+
+// ===== СВОИ СТИКЕРЫ (делают Cuber и Premium, видят все) =====
+const CUSTOM_TAB = 'Сделать свои стикеры';
+let customStickers = null;
+async function loadCustomStickers() {
+  try {
+    const { data } = await db.from('user_stickers').select('url').order('created_at', { ascending: false }).limit(300);
+    customStickers = data || [];
+  } catch (e) { customStickers = []; }
+  return customStickers;
+}
+function renderCustomGrid() {
+  const add = '<button class="sticker-item custom-add" title="Создать стикер"><div class="cs-add">+</div></button>';
+  if (!customStickers) {
+    stickerGrid.innerHTML = add;
+    loadCustomStickers().then(() => { if (activePack === PACKS.length) renderCustomGrid(); });
+    return;
+  }
+  stickerGrid.innerHTML = add + customStickers.map(s => `<button class="sticker-item custom-item" data-url="${s.url}"><img class="cs-img" src="${s.url}" alt=""></button>`).join('');
+}
+async function getMyPlan() {
+  try {
+    const { data } = await db.from('users').select('plan').eq('id', String(myId)).maybeSingle();
+    return data ? data.plan : null;
+  } catch (e) { return null; }
+}
+function squareImage(file, size) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const s = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+      URL.revokeObjectURL(img.src);
+      c.toBlob(b => b ? resolve(b) : reject(new Error('не вышло сохранить картинку')), 'image/png');
+    };
+    img.onerror = () => reject(new Error('это не картинка'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+async function openStickerMaker() {
+  if (!myId) return;
+  const plan = await getMyPlan();
+  if (plan !== 'cuber' && plan !== 'premium') { flash('Делать свои стикеры могут только Cuber и Premium'); return; }
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/*';
+  picker.onchange = async () => {
+    const file = picker.files && picker.files[0];
+    if (!file) return;
+    flash('Загружаю стикер...');
+    try {
+      const blob = await squareImage(file, 256);
+      const path = `${myId}/${Date.now()}.png`;
+      const up = await db.storage.from('stickers').upload(path, blob, { contentType: 'image/png' });
+      if (up.error) throw up.error;
+      const url = db.storage.from('stickers').getPublicUrl(path).data.publicUrl;
+      const ins = await db.from('user_stickers').insert({ owner_id: String(myId), url: url });
+      if (ins.error) throw ins.error;
+      customStickers = null;
+      if (activePack === PACKS.length && stickerPanel.classList.contains('open')) renderCustomGrid();
+      flash('Стикер добавлен');
+    } catch (err) { flash('Ошибка: ' + (err.message || err)); }
+  };
+  picker.click();
 }
 
 // ===== ГОЛОСОВЫЕ СООБЩЕНИЯ =====
 const VOICE_PREFIX = 'VOICE::';
 function isVoice(t) { return typeof t === 'string' && t.startsWith(VOICE_PREFIX); }
 function previewOf(t) {
-  if (STICKER_RE.test(t)) return '💗 Стикер';
+  if (STICKER_RE.test(t) || CUSTOM_RE.test(t)) return '💗 Стикер';
   if (isVoice(t)) return '🎤 Голосовое';
   return t;
 }
@@ -1843,8 +1926,12 @@ async function sendVoice() {
 
 function buildMessageEl(text, isMe, timestamp, id, read, reply) {
 const div = document.createElement('div');
+const cm = CUSTOM_RE.exec(text);
 const sm = STICKER_RE.exec(text);
-if (sm && STICKER_SVG[sm[1]]) {
+if (cm) {
+  div.className = 'msg sticker-msg' + (isMe ? ' me' : '');
+  div.innerHTML = `<img class="cs-img big" src="${cm[1]}" alt="">`;
+} else if (sm && STICKER_SVG[sm[1]]) {
   div.className = 'msg sticker-msg' + (isMe ? ' me' : '');
   div.innerHTML = STICKER_SVG[sm[1]];
 } else {
