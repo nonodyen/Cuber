@@ -799,8 +799,7 @@ await db.from('push_subs').upsert({ endpoint: sub.endpoint, user_id: uid(), sub:
 // Просим сервер отправить пуш получателю (без ожидания ответа)
 async function notifyPush(toId, text) {
 try {
-const me = await getMyUsername();
-await db.functions.invoke('send-push', { body: { to: toId, title: '@' + me, body: text.slice(0, 120) } });
+await db.functions.invoke('send-push', { body: { to: toId, body: previewOf(text) } });
 } catch (e) {}
 }
 
