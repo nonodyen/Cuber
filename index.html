@@ -1819,7 +1819,7 @@ const CUSTOM_TAB = 'Сделать свои стикеры';
 let customStickers = null;
 async function loadCustomStickers() {
   try {
-    const { data } = await db.from('user_stickers').select('url').order('created_at', { ascending: false }).limit(300);
+    const { data } = await db.from('user_stickers').select('url').eq('owner_id', String(myId)).order('created_at', { ascending: false }).limit(300);
     customStickers = data || [];
   } catch (e) { customStickers = []; }
   return customStickers;
