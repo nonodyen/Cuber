@@ -1662,17 +1662,6 @@ async function notifyIncoming(m) {
   }
 }
 // Удаление своего сообщения: нажать на него, подтвердить
-messagesDiv.addEventListener('click', async (e) => {
-  const el = e.target.closest('.msg.me[data-id]');
-  if (!el) return;
-  if (!confirm('Удалить сообщение?')) return;
-  const { data, error } = await db.from('messages').delete().eq('id', el.dataset.id).select('id');
-  if (error) { alert('Не удалось удалить: ' + error.message); return; }
-  if (!data || data.length === 0) { alert('Не удалось удалить. Нужно выполнить neobee_v10_delete.sql в Supabase.'); return; }
-  lastRenderedKey = '';
-  refreshChat();
-  flash('🗑 Сообщение удалено');
-});
 
 // ===== НЕСКОЛЬКО АККАУНТОВ НА ОДНОМ УСТРОЙСТВЕ =====
 // Сохраняем только никнеймы. Пароли и сессии не хранятся: при входе пароль вводится заново.
@@ -2354,8 +2343,62 @@ messagesDiv.addEventListener('pointerdown', (e) => {
 const m = e.target.closest('.msg');
 if (!m || !m.dataset.text || !currentContactId) return;
 cancelPress();
-pressTimer = setTimeout(() => { pressTimer = null; setReplyFromEl(m); }, 450);
+const px = e.clientX, py = e.clientY;
+pressTimer = setTimeout(() => { pressTimer = null; openMsgMenu(m, px, py); }, 450);
 });
+// ===== МЕНЮ СООБЩЕНИЯ (долгое нажатие) =====
+function closeMsgMenu() { const o = $('msgMenuOverlay'); if (o) o.remove(); }
+function openMsgMenu(m, x, y) {
+closeMsgMenu();
+const isMe = m.classList.contains('me');
+const id = m.dataset.id;
+const text = m.dataset.text || '';
+const ov = document.createElement('div');
+ov.id = 'msgMenuOverlay';
+ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.25);';
+ov.addEventListener('click', closeMsgMenu);
+const box = document.createElement('div');
+box.style.cssText = 'position:fixed;min-width:210px;background:#1e1e2e;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;';
+box.style.left = Math.max(8, Math.min(x - 100, window.innerWidth - 230)) + 'px';
+box.style.top = Math.max(8, Math.min(y, window.innerHeight - 220)) + 'px';
+const item = (label, color, fn) => {
+const b = document.createElement('button');
+b.textContent = label;
+b.style.cssText = 'display:block;width:100%;text-align:left;padding:12px 16px;background:none;border:0;border-bottom:1px solid rgba(255,255,255,0.06);color:' + (color || '#fff') + ';font-size:15px;';
+b.addEventListener('click', (e) => { e.stopPropagation(); closeMsgMenu(); fn(); });
+box.appendChild(b);
+};
+item('↩ Ответить', null, () => setReplyFromEl(m));
+item('📋 Копировать', null, async () => {
+try { await navigator.clipboard.writeText(text); flash('Скопировано'); } catch (e) { flash('Не удалось скопировать'); }
+});
+const isPlain = !/^[A-Z]+::/.test(text) && !STICKER_RE.test(text) && !CUSTOM_RE.test(text);
+if (isMe && id && isPlain) item('✏️ Изменить', null, () => editOwnMessage(id, text));
+if (isMe && id) item('🗑 Удалить', '#ff6b6b', () => deleteOwnMessage(id));
+ov.appendChild(box);
+document.body.appendChild(ov);
+}
+async function deleteOwnMessage(id) {
+if (!confirm('Удалить сообщение?')) return;
+const { data, error } = await db.from('messages').delete().eq('id', id).select('id');
+if (error) { alert('Не удалось удалить: ' + error.message); return; }
+if (!data || data.length === 0) { alert('Не удалось удалить. Нужно выполнить neobee_v10_delete.sql в Supabase.'); return; }
+lastRenderedKey = '';
+refreshChat();
+flash('🗑 Сообщение удалено');
+}
+async function editOwnMessage(id, old) {
+const next = prompt('Изменить сообщение', old);
+if (next === null) return;
+const t = next.trim();
+if (!t || t === old) return;
+const { data, error } = await db.from('messages').update({ text: t }).eq('id', id).select('id');
+if (error) { alert('Не удалось изменить: ' + error.message); return; }
+if (!data || data.length === 0) { alert('Не удалось изменить. Нужно выполнить message_edit_setup.sql в Supabase.'); return; }
+lastRenderedKey = '';
+refreshChat();
+flash('✏️ Сообщение изменено');
+}
 ['pointerup', 'pointerleave', 'pointercancel', 'pointermove'].forEach(ev => messagesDiv.addEventListener(ev, cancelPress));
 messagesDiv.addEventListener('dblclick', (e) => {
 const m = e.target.closest('.msg');
