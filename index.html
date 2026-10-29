@@ -2436,7 +2436,8 @@ box.appendChild(b);
 });
 list.appendChild(d);
 };
-addRow('Владелец', '👑 создатель канала', []);
+await loadOwnerNames([ch.user_id]);
+addRow(ownerNames[String(ch.user_id)] ? '@' + ownerNames[String(ch.user_id)] : 'Владелец', '👑 создатель канала', []);
 members.forEach((name) => {
 const isAdm = admins.includes(name);
 const actions = [];
@@ -2490,6 +2491,7 @@ await renderChSet();
 async function renderChSet() {
 const id = chSetId;
 const ch = id != null ? await getChannelById(id) : null;
+if (ch) await loadOwnerNames([ch.user_id]);
 if (!ch) { closeChSet(); return; }
 const uname = await getMyUsername();
 const owner = isOwner(ch);
@@ -2537,7 +2539,7 @@ list.appendChild(d);
 };
 
 if (chSetKind === 'subs') {
-item('👑 Владелец', 'создатель канала');
+item(ownerNames[String(ch.user_id)] ? '👑 @' + ownerNames[String(ch.user_id)] : '👑 Владелец', 'создатель канала');
 members.forEach(n => item('@' + n, admins.includes(n) ? '🛡 админ' : 'подписчик'));
 }
 if (chSetKind === 'admins') {
