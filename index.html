@@ -335,6 +335,13 @@ img { display:block; }
 .pl-ecg-path { fill:none; stroke:#b44cff; stroke-width:2; stroke-dasharray:1000; stroke-dashoffset:1000; animation:plDraw 2.5s ease-out infinite; filter:drop-shadow(0 0 3px #ff9ad0) drop-shadow(0 0 10px #b44cff); }
 /* Неоновое свечение за сердцем, бьётся в такт */
 #splash::before { content:''; position:absolute; left:50%; top:40%; width:340px; height:340px; margin:-170px 0 0 -170px; border-radius:50%; background:radial-gradient(circle, rgba(255,61,113,.38), rgba(180,76,255,.16) 45%, transparent 70%); animation:plAura 1.4s ease-in-out infinite; pointer-events:none; }
+/* Робот на заставке: идёт слева направо, останавливается, машет, уходит */
+.rb-go { position:relative; width:220px; height:220px; margin:0 auto; animation: rbGo 2.6s cubic-bezier(.4,0,.2,1) forwards; }
+.rb-img { width:100%; height:100%; object-fit:contain; mix-blend-mode:screen; transform-origin:50% 90%; animation: rbBob .5s ease-in-out infinite; }
+.rb-hand { position:absolute; right:-14px; top:4px; font-size:44px; opacity:0; transform-origin:30% 80%; animation: rbHand 2.6s linear forwards; }
+@keyframes rbGo { 0% { transform:translateX(-120vw); } 35% { transform:translateX(0); } 60% { transform:translateX(0); } 100% { transform:translateX(120vw); } }
+@keyframes rbBob { 0%,100% { transform:translateY(0) rotate(-2deg); } 50% { transform:translateY(-12px) rotate(2deg); } }
+@keyframes rbHand { 0%,34% { opacity:0; transform:rotate(0); } 36% { opacity:1; } 40% { transform:rotate(-18deg); } 44% { transform:rotate(18deg); } 48% { transform:rotate(-18deg); } 52% { transform:rotate(18deg); } 56% { opacity:1; transform:rotate(0); } 60%,100% { opacity:0; } }
 @keyframes plAura { 0%,100%{transform:scale(.85);opacity:.6} 15%{transform:scale(1.15);opacity:1} 30%{transform:scale(.95);opacity:.75} 45%{transform:scale(1.05);opacity:.9} 60%{transform:scale(.85);opacity:.6} }
 @keyframes plDraw { to{stroke-dashoffset:0} }
 /* ===== АНИМАЦИЯ ХАКЕРСКИХ СТИКЕРОВ ===== */
@@ -488,7 +495,8 @@ img { display:block; }
 <div id="splash">
 <div class="pl-particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
 <div class="pl-heart-wrap">
-<div class="pl-heart"><svg viewBox="0 0 100 100"><defs><linearGradient id="plg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ff3d71"/><stop offset="50%" stop-color="#b44cff"/><stop offset="100%" stop-color="#8f6cff"/></linearGradient></defs><path fill="url(#plg)" stroke="#ffd1e8" stroke-width="1.4" stroke-opacity=".75" stroke-linejoin="round" d="M50 88 C20 65 5 45 5 30 C5 15 17 5 30 5 C40 5 47 12 50 20 C53 12 60 5 70 5 C83 5 95 15 95 30 C95 45 80 65 50 88 Z"/></svg></div>
+<div class="rb-go"><img class="rb-img" src="robot.png" alt=""><span class="rb-hand">👋</span></div>
+<div class="pl-heart" style="display:none"><svg viewBox="0 0 100 100"><defs><linearGradient id="plg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ff3d71"/><stop offset="50%" stop-color="#b44cff"/><stop offset="100%" stop-color="#8f6cff"/></linearGradient></defs><path fill="url(#plg)" stroke="#ffd1e8" stroke-width="1.4" stroke-opacity=".75" stroke-linejoin="round" d="M50 88 C20 65 5 45 5 30 C5 15 17 5 30 5 C40 5 47 12 50 20 C53 12 60 5 70 5 C83 5 95 15 95 30 C95 45 80 65 50 88 Z"/></svg></div>
 </div>
 <div class="pl-logo">Pulse</div>
 <div class="pl-tag">Быстрее сердцебиения</div>
@@ -547,6 +555,7 @@ img { display:block; }
 <div class="cinfo"><div class="name"><span id="chatName">Выберите контакт</span><span id="chatBadge"></span></div><div class="sub" id="chatSub"></div></div>
 <button id="callBtn" class="call-head-btn" title="Позвонить">📞</button>
 <button id="contactBtn" class="call-head-btn" title="Контакт" style="display:none;">＋</button>
+<button id="delChatBtn" class="call-head-btn" title="Удалить чат" style="display:none;">🗑</button>
 </div>
 <div class="messages" id="messages">
 <div class="empty-msg">💬 Выберите контакт слева, чтобы начать чат</div>
@@ -2097,6 +2106,7 @@ const map = {};
 (data || []).forEach(m => {
 const mine = String(m.sender_id) === me;
 const other = mine ? String(m.receiver_id) : String(m.sender_id);
+if (clearedMap[other] && new Date(m.created_at) <= new Date(clearedMap[other])) return;
 if (!map[other]) map[other] = { text: m.text, mine: mine };
 });
 return map;
@@ -2161,6 +2171,7 @@ renderContacts();
 
 async function renderContacts() {
 // Авто-добавление тех, кто написал, отключено: контакты добавляются вручную кнопкой ＋ в чате
+await loadClears();
 const [contacts, channels, usersRes, lastMap] = await Promise.all([
 loadContacts(),
 loadChannelsFromCloud(),
@@ -2630,7 +2641,8 @@ messagesDiv.innerHTML = '<div class="empty-msg">Не удалось загруз
 }
 return;
 }
-const list = data || [];
+const clr = clearedMap[String(other)];
+const list = (data || []).filter(m => !clr || new Date(m.created_at) > new Date(clr));
 const key = list.length + ':' + (list.length ? list[list.length - 1].id : '') + ':' + list.filter(m => m.read_at).length;
 // Отмечаем входящие как прочитанные, пока чат открыт
 if (list.some(m => String(m.sender_id) === other && !m.read_at)) {
@@ -3035,6 +3047,13 @@ var pb=document.getElementById('menuProfileBtn');
   });
 })();
 </script>
+<div class="modal" id="delChatModal"><div class="modal-content">
+<h3 style="margin:0 0 14px;">Удалить чат?</h3>
+<div style="display:flex; flex-direction:column; gap:8px;">
+<button id="delMeBtn" style="padding:14px; border:none; border-radius:14px; font-weight:700; cursor:pointer; background:#2b3a4d; color:#fff;">Удалить у себя</button>
+<button id="delBothBtn" style="padding:14px; border:none; border-radius:14px; font-weight:700; cursor:pointer; background:#e0555f; color:#fff;">Удалить у обоих</button>
+<button id="delCancel" style="padding:12px; border:none; border-radius:14px; cursor:pointer; background:transparent; color:#8fa3b8;">Отмена</button>
+</div></div></div>
 <div id="storyViewer" class="story-viewer">
 <div class="story-prog"><i id="storyProg"></i></div>
 <div class="story-top"><span id="storyTitle"></span><button id="storyDel" style="display:none;">Удалить</button><button id="storyClose">✕</button></div>
@@ -3130,6 +3149,7 @@ function renderSubInfo(plan) {
 async function refreshContactBtn(userId) {
   const btn = document.getElementById('contactBtn');
   btn.style.display = 'none';
+  document.getElementById('delChatBtn').style.display = (userId && String(userId) !== String(myId)) ? '' : 'none';
   if (!userId || String(userId) === String(myId)) return;
   let inList = false;
   try {
@@ -3160,6 +3180,44 @@ document.getElementById('contactBtn').onclick = async () => {
   refreshContactBtn(currentContactId);
   renderContacts();
 };
+// Удаление чата: у себя (скрывается история до этого момента) или у обоих (сообщения удаляются)
+let clearedMap = {};
+async function loadClears() {
+  if (!myId) return;
+  try {
+    const { data } = await db.from('chat_clears').select('contact_id, cleared_at').eq('user_id', String(myId));
+    clearedMap = {};
+    (data || []).forEach(r => { clearedMap[String(r.contact_id)] = r.cleared_at; });
+  } catch (e) {}
+}
+const delChatModal = document.getElementById('delChatModal');
+document.getElementById('delChatBtn').onclick = () => { if (currentContactId) delChatModal.classList.add('active'); };
+document.getElementById('delCancel').onclick = () => delChatModal.classList.remove('active');
+document.getElementById('delMeBtn').onclick = () => clearChat(false);
+document.getElementById('delBothBtn').onclick = () => clearChat(true);
+async function clearChat(both) {
+  const other = String(currentContactId || '');
+  const me = String(myId || '');
+  if (!other || !me) return;
+  const now = new Date().toISOString();
+  delChatModal.classList.remove('active');
+  clearedMap[other] = now;
+  lastRenderedKey = '';
+  messagesDiv.innerHTML = '<div class="empty-msg">Чат очищен</div>';
+  try {
+    if (both) {
+      const { error } = await db.from('messages').delete()
+        .or('and(sender_id.eq.' + me + ',receiver_id.eq.' + other + '),and(sender_id.eq.' + other + ',receiver_id.eq.' + me + ')')
+        .is('channel_id', null);
+      if (error) throw error;
+    }
+    const { error: e2 } = await db.from('chat_clears').upsert({ user_id: me, contact_id: other, cleared_at: now });
+    if (e2) throw e2;
+    flash(both ? 'Чат удалён у обоих' : 'Чат удалён у вас');
+  } catch (err) { flash('Ошибка: ' + (err.message || err)); }
+  renderContacts();
+  refreshChat();
+}
 // Загрузка подписки и ника при любом открытии профиля (и из меню, и из нижней вкладки)
 async function loadSubInfo() {
   if (!myId) return;
