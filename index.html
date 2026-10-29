@@ -195,6 +195,27 @@ img { display:block; }
 .sticker-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; max-height:230px; overflow-y:auto; transition:opacity .2s ease; }
 .sticker-grid.fading { opacity:0; }
 .sticker-item { border:none; background:transparent; padding:4px; border-radius:14px; cursor:pointer; }
+/* ===== ИСТОРИИ ===== */
+.stories-strip { display:flex; gap:12px; overflow-x:auto; padding:10px 6px 12px; }
+.st-item { display:flex; flex-direction:column; align-items:center; gap:4px; width:66px; flex-shrink:0; border:none; background:none; color:inherit; cursor:pointer; font-size:11px; }
+.st-ring { width:58px; height:58px; border-radius:50%; padding:3px; background:var(--grad); box-sizing:border-box; }
+.st-ring.add { background:var(--surface2); border:2px dashed var(--muted); padding:0; }
+.st-av { width:100%; height:100%; border-radius:50%; background:var(--surface); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:20px; color:#fff; box-sizing:border-box; }
+.st-name { max-width:66px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.story-viewer { position:fixed; inset:0; background:#000; z-index:9000; display:none; }
+.story-viewer.open { display:block; }
+.story-body { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+.story-body img, .story-body video { max-width:100%; max-height:100%; }
+.story-prog { position:absolute; top:10px; left:10px; right:10px; height:3px; background:rgba(255,255,255,.3); border-radius:2px; overflow:hidden; z-index:2; }
+.story-prog i { display:block; height:100%; width:0; background:#fff; }
+.story-prog i.run { animation: stProg linear forwards; }
+@keyframes stProg { to { width:100%; } }
+.story-top { position:absolute; top:22px; left:12px; right:12px; display:flex; align-items:center; gap:10px; color:#fff; z-index:2; font-weight:700; }
+.story-top span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.story-top button { border:none; background:rgba(0,0,0,.45); color:#fff; border-radius:999px; padding:6px 12px; cursor:pointer; }
+.story-tap { position:absolute; top:0; bottom:0; width:35%; z-index:1; }
+.story-tap.l { left:0; }
+.story-tap.r { right:0; }
 .cs-img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:14px; display:block; }
 .cs-img.big { width:150px; height:150px; aspect-ratio:auto; }
 .cs-add { width:100%; aspect-ratio:1; border-radius:14px; border:2px dashed var(--muted); display:flex; align-items:center; justify-content:center; font-size:34px; color:var(--muted); box-sizing:border-box; }
@@ -574,6 +595,7 @@ img { display:block; }
 <option value="">Без подписки</option>
 <option value="cuber">Cuber 🤖</option>
 <option value="premium">Premium 👑</option>
+<option value="cuber,premium">Cuber 🤖 + Premium 👑</option>
 </select>
 <div class="error" id="devMsg"></div>
 <div class="modal-actions">
@@ -626,6 +648,7 @@ img { display:block; }
 <input type="email" id="profileEmail" placeholder="Электронная почта">
 </div>
 <div class="pf-hint">Номер и почта видны только вам.</div>
+<div id="subInfo" class="pf-hint" style="display:none; color:#b44cff !important; font-weight:700;"></div>
 <div class="pf-sec">О себе</div>
 <div class="pf-card"><textarea id="profileAbout" placeholder="Напишите немного о себе"></textarea></div>
 <div class="pf-card pf-actions"><button class="save-btn" id="saveProfileBtn">Сохранить изменения</button></div>
@@ -996,7 +1019,7 @@ async function showBadge(userId) {
   if (!userId) return;
   const { data } = await db.from('users').select('plan').eq('id', String(userId)).maybeSingle();
   if (String(currentContactId) !== String(userId)) return; // чат уже сменился
-  if (data && PLAN_BADGE[data.plan]) el.textContent = PLAN_BADGE[data.plan];
+  if (data && data.plan) el.textContent = String(data.plan).split(',').map(p => PLAN_BADGE[p.trim()] || '').join('');
 }
 
 
@@ -2153,6 +2176,7 @@ updateChatSub();
 updateTitle();
 
 contactList.innerHTML = '';
+contactList.appendChild(await buildStoriesStrip());
 
 if (channels.length > 0) {
 const channelLabel = document.createElement('div');
@@ -2220,7 +2244,7 @@ contactList.appendChild(div);
 }
 
 if (contacts.length === 0 && channels.length === 0) {
-contactList.innerHTML = '<div class="empty-contacts">👤 Здесь будут ваши контакты и каналы.<br>Нажмите ➕ или 🔍, чтобы найти друга</div>';
+contactList.insertAdjacentHTML('beforeend', '<div class="empty-contacts">👤 Здесь будут ваши контакты и каналы.<br>Нажмите ➕ или 🔍, чтобы найти друга</div>');
 }
 }
 
@@ -3003,10 +3027,150 @@ document.getElementById('menuLeaveChannelBtn').addEventListener('click', functio
 var pb=document.getElementById('menuProfileBtn');
   if (pb) pb.addEventListener('click', async function(){
     var id=uid(); if(!id) return;
-    var r=await db.from('users').select('username').eq('id', id).maybeSingle();
+    var r=await db.from('users').select('username, plan').eq('id', id).maybeSingle();
     var f=document.getElementById('profileUser'); if (f && r.data) f.value='@'+r.data.username;
+    if (r.data) renderSubInfo(r.data.plan);
   });
 })();
+</script>
+<div id="storyViewer" class="story-viewer">
+<div class="story-prog"><i id="storyProg"></i></div>
+<div class="story-top"><span id="storyTitle"></span><button id="storyDel" style="display:none;">Удалить</button><button id="storyClose">✕</button></div>
+<div id="storyBody" class="story-body"></div>
+<div class="story-tap l" id="storyPrev"></div>
+<div class="story-tap r" id="storyNext"></div>
+</div>
+<script>
+// ===== ИСТОРИИ: логика =====
+let storiesCache = null;
+let viewGroup = [], viewIdx = 0, viewTimer = null, viewName = '';
+async function loadStories() {
+  try {
+    const { data } = await db.from('stories').select('id, owner_id, url, kind, created_at').order('created_at', { ascending: true }).limit(300);
+    storiesCache = data || [];
+  } catch (e) { storiesCache = []; }
+  return storiesCache;
+}
+async function buildStoriesStrip() {
+  const wrap = document.createElement('div');
+  wrap.className = 'stories-strip';
+  wrap.innerHTML = '<button class="st-item" id="stAdd"><div class="st-ring add"><div class="st-av">+</div></div><span class="st-name">Моя история</span></button>';
+  const stories = await loadStories();
+  const groups = {};
+  stories.forEach(s => { const k = String(s.owner_id); (groups[k] = groups[k] || []).push(s); });
+  const ids = Object.keys(groups);
+  const names = {};
+  if (ids.length) {
+    try {
+      const { data } = await db.from('users').select('id, username, name').in('id', ids);
+      (data || []).forEach(u => { names[String(u.id)] = String(u.id) === String(myId) ? 'Вы' : (u.name || u.username); });
+    } catch (e) {}
+  }
+  ids.forEach(k => {
+    const label = names[k] || 'Друг';
+    const btn = document.createElement('button');
+    btn.className = 'st-item';
+    btn.innerHTML = `<div class="st-ring"><div class="st-av">${esc(label.charAt(0).toUpperCase())}</div></div><span class="st-name">${esc(label)}</span>`;
+    btn.onclick = () => openStories(groups[k], label);
+    wrap.appendChild(btn);
+  });
+  wrap.querySelector('#stAdd').onclick = addStory;
+  return wrap;
+}
+function openStories(list, name) {
+  viewGroup = list.slice();
+  viewIdx = 0;
+  viewName = name;
+  document.getElementById('storyViewer').classList.add('open');
+  showStory();
+}
+function closeStories() {
+  clearTimeout(viewTimer);
+  document.getElementById('storyBody').innerHTML = '';
+  document.getElementById('storyViewer').classList.remove('open');
+}
+function showStory() {
+  clearTimeout(viewTimer);
+  if (viewIdx >= viewGroup.length) { closeStories(); return; }
+  const s = viewGroup[viewIdx];
+  const body = document.getElementById('storyBody');
+  const prog = document.getElementById('storyProg');
+  body.innerHTML = s.kind === 'video' ? `<video src="${s.url}" autoplay playsinline></video>` : `<img src="${s.url}" alt="">`;
+  document.getElementById('storyTitle').textContent = viewName;
+  document.getElementById('storyDel').style.display = String(s.owner_id) === String(myId) ? 'block' : 'none';
+  prog.className = '';
+  prog.style.animationDuration = '';
+  void prog.offsetWidth;
+  const v = body.querySelector('video');
+  if (v) {
+    v.onended = nextStory;
+    v.onloadedmetadata = () => { prog.style.animationDuration = v.duration + 's'; prog.className = 'run'; };
+    v.onerror = nextStory;
+  } else {
+    prog.style.animationDuration = '5s';
+    prog.className = 'run';
+    viewTimer = setTimeout(nextStory, 5000);
+  }
+}
+// Текст о купленных подписках в профиле
+function renderSubInfo(plan) {
+  const el = document.getElementById('subInfo');
+  const arr = String(plan || '').split(',').map(p => p.trim());
+  const have = ['cuber', 'premium'].filter(p => arr.includes(p));
+  if (!have.length) { el.style.display = 'none'; el.textContent = ''; return; }
+  const names = have.map(p => p === 'cuber' ? 'Cuber 🤖' : 'Premium 👑');
+  el.textContent = names.length === 2
+    ? 'У вас куплены подписки: ' + names.join(' и ')
+    : 'У вас куплена подписка: ' + names[0];
+  el.style.display = 'block';
+}
+function nextStory() { viewIdx++; showStory(); }
+function prevStory() { viewIdx = Math.max(0, viewIdx - 1); showStory(); }
+document.getElementById('storyClose').onclick = closeStories;
+document.getElementById('storyNext').onclick = nextStory;
+document.getElementById('storyPrev').onclick = prevStory;
+document.getElementById('storyDel').onclick = async () => {
+  const s = viewGroup[viewIdx];
+  if (!s) return;
+  try {
+    const { error } = await db.from('stories').delete().eq('id', s.id);
+    if (error) throw error;
+  } catch (err) { flash('Ошибка: ' + (err.message || err)); return; }
+  viewGroup.splice(viewIdx, 1);
+  if (!viewGroup.length) closeStories(); else showStory();
+  renderContacts();
+};
+async function isCuber() {
+  try {
+    const { data } = await db.rpc('is_cuber');
+    return data === true;
+  } catch (e) { return false; }
+}
+function addStory() {
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/*,video/*';
+  picker.onchange = async () => {
+    const file = picker.files && picker.files[0];
+    if (!file) return;
+    const isVideo = file.type.startsWith('video');
+    if (!(await isCuber())) { flash('Истории могут выкладывать только Cuber'); return; }
+    if (file.size > (isVideo ? 30 : 10) * 1024 * 1024) { flash('Файл слишком большой'); return; }
+    flash('Загружаю историю...');
+    try {
+      const ext = ((file.name.split('.').pop() || '') + '').toLowerCase().replace(/[^a-z0-9]/g, '') || (isVideo ? 'mp4' : 'jpg');
+      const path = `${myId}/${Date.now()}.${ext}`;
+      const up = await db.storage.from('stories').upload(path, file, { contentType: file.type });
+      if (up.error) throw up.error;
+      const url = db.storage.from('stories').getPublicUrl(path).data.publicUrl;
+      const ins = await db.from('stories').insert({ owner_id: String(myId), url: url, kind: isVideo ? 'video' : 'photo' });
+      if (ins.error) throw ins.error;
+      flash('История добавлена');
+      renderContacts();
+    } catch (err) { flash('Ошибка: ' + (err.message || err)); }
+  };
+  picker.click();
+}
 </script>
 </body>
 </html>
