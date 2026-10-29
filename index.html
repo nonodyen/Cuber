@@ -574,6 +574,8 @@ img { display:block; }
 <button id="devGrant">Выдать</button>
 </div>
 <button id="devBan" class="dev-ban">Забанить (удалить аккаунт)</button>
+<button id="devChannels">📢 Каналы: удалить</button>
+<div id="devChList" style="max-height:40vh;overflow:auto;margin-top:8px;"></div>
 </div>
 </div>
 
@@ -1021,6 +1023,41 @@ document.getElementById('devBan').addEventListener('click', () => {
   if (!confirm('Удалить аккаунт @' + username + ' навсегда?')) return;
   devCall({ action: 'ban', username: username });
 });
+
+// Разработчик: список всех каналов и удаление (нужен dev_channels_setup.sql)
+document.getElementById('devChannels').addEventListener('click', loadDevChannels);
+async function loadDevChannels() {
+  const box = document.getElementById('devChList');
+  const msg = document.getElementById('devMsg');
+  box.innerHTML = 'Загрузка...';
+  const { data, error } = await db.from('channels').select('id, name, user_id, mandatory').order('name');
+  if (error) { box.textContent = 'Ошибка: ' + error.message; return; }
+  const list = data || [];
+  await loadOwnerNames(list.map(c => c.user_id));
+  box.innerHTML = '';
+  if (!list.length) { box.textContent = 'Каналов нет'; return; }
+  list.forEach(c => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.08);';
+    const txt = document.createElement('div');
+    txt.textContent = c.name + ' · @' + (ownerNames[String(c.user_id)] || '?') + (c.mandatory ? ' · обязательный' : '');
+    const del = document.createElement('button');
+    del.textContent = '🗑';
+    del.className = 'dev-ban';
+    del.addEventListener('click', async () => {
+      if (!confirm('Удалить канал «' + c.name + '» и все его сообщения?')) return;
+      const m = await db.from('messages').delete().eq('channel_id', String(c.id));
+      if (m.error) { msg.textContent = 'Ошибка сообщений: ' + m.error.message; return; }
+      const r = await db.from('channels').delete().eq('id', c.id);
+      if (r.error) { msg.textContent = 'Ошибка: ' + r.error.message; return; }
+      row.remove();
+      msg.textContent = 'Канал «' + c.name + '» удалён';
+    });
+    row.appendChild(txt);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
 
 // ===== ОНЛАЙН-СТАТУС =====
 async function setOnline(flag) {
