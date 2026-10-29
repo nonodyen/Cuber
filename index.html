@@ -3140,7 +3140,7 @@ function renderSubInfo(plan) {
   const el = document.getElementById('subInfo');
   const arr = String(plan || '').split(',').map(p => p.trim());
   const have = ['cuber', 'premium'].filter(p => arr.includes(p));
-  if (!have.length) { el.style.display = 'none'; el.textContent = ''; return; }
+  if (!have.length) { el.textContent = 'Подписка: нет'; el.style.display = 'block'; return; }
   const names = have.map(p => p === 'cuber' ? 'Cuber 🤖' : 'Premium 👑');
   el.textContent = names.length === 2
     ? 'У вас куплены подписки: ' + names.join(' и ')
@@ -3222,14 +3222,17 @@ async function clearChat(both) {
 }
 // Загрузка подписки и ника при любом открытии профиля (и из меню, и из нижней вкладки)
 async function loadSubInfo() {
-  if (!myId) return;
+  const info = document.getElementById('subInfo');
+  const show = (t) => { info.textContent = t; info.style.display = 'block'; };
+  if (!myId) { show('Диагностика: вход не выполнен'); return; }
   try {
-    const { data } = await db.from('users').select('username, plan').eq('id', String(myId)).maybeSingle();
-    if (!data) return;
+    const { data, error } = await db.from('users').select('username, plan').eq('id', String(myId)).maybeSingle();
+    if (error) { show('Диагностика: ошибка базы: ' + error.message); return; }
+    if (!data) { show('Диагностика: в базе нет строки для этого аккаунта'); return; }
     const f = document.getElementById('profileUser');
     if (f) f.value = '@' + data.username;
     renderSubInfo(data.plan);
-  } catch (e) {}
+  } catch (e) { show('Диагностика: ' + (e.message || e)); }
 }
 (function () {
   const pm = document.getElementById('profileModal');
