@@ -546,6 +546,7 @@ img { display:block; }
 <div class="avatar" id="chatAvatar">👤</div>
 <div class="cinfo"><div class="name"><span id="chatName">Выберите контакт</span><span id="chatBadge"></span></div><div class="sub" id="chatSub"></div></div>
 <button id="callBtn" class="call-head-btn" title="Позвонить">📞</button>
+<button id="contactBtn" class="call-head-btn" title="Контакт" style="display:none;">＋</button>
 </div>
 <div class="messages" id="messages">
 <div class="empty-msg">💬 Выберите контакт слева, чтобы начать чат</div>
@@ -2159,7 +2160,7 @@ renderContacts();
 }
 
 async function renderContacts() {
-await syncIncomingContacts();
+// Авто-добавление тех, кто написал, отключено: контакты добавляются вручную кнопкой ＋ в чате
 const [contacts, channels, usersRes, lastMap] = await Promise.all([
 loadContacts(),
 loadChannelsFromCloud(),
@@ -2666,6 +2667,7 @@ if (userId) { clearUnread(String(userId)); updateTitle(); }
 document.querySelector('.chat-header').classList.remove('hidden');
 chatName.textContent = contact;
 showBadge(userId);
+refreshContactBtn(userId);
 setChatAvatar(contact, userId);
 $('chatSub').textContent = userId ? '' : (channel ? 'Канал · ' + (cleanMembers(channel.members).length + 1) + ' подп.' : 'Канал');
 updateChatSub();
@@ -3124,6 +3126,40 @@ function renderSubInfo(plan) {
     : 'У вас куплена подписка: ' + names[0];
   el.style.display = 'block';
 }
+// Кнопка ＋ в чате: добавить в контакты / убрать из контактов (как в Telegram)
+async function refreshContactBtn(userId) {
+  const btn = document.getElementById('contactBtn');
+  btn.style.display = 'none';
+  if (!userId || String(userId) === String(myId)) return;
+  let inList = false;
+  try {
+    const { data } = await db.from('contacts').select('contact_id').eq('user_id', String(myId)).eq('contact_id', String(userId));
+    inList = !!(data && data.length);
+  } catch (e) {}
+  if (String(currentContactId) !== String(userId)) return;
+  btn.textContent = inList ? '✓' : '＋';
+  btn.title = inList ? 'В контактах (нажмите, чтобы убрать)' : 'Добавить в контакты';
+  btn.dataset.inList = inList ? '1' : '';
+  btn.style.display = '';
+}
+document.getElementById('contactBtn').onclick = async () => {
+  if (!currentContactId || !myId) return;
+  const btn = document.getElementById('contactBtn');
+  const inList = btn.dataset.inList === '1';
+  if (inList) {
+    if (!confirm('Убрать из контактов?')) return;
+    const { error } = await db.from('contacts').delete().eq('user_id', String(myId)).eq('contact_id', String(currentContactId));
+    if (error) { flash('Ошибка: ' + error.message); return; }
+    flash('Убран из контактов');
+  } else {
+    const { data: u } = await db.from('users').select('id, username').eq('id', String(currentContactId)).maybeSingle();
+    const { error } = await db.from('contacts').insert({ user_id: String(myId), contact_id: String(currentContactId), name: u ? u.username : 'друг' });
+    if (error) { flash('Ошибка: ' + error.message); return; }
+    flash('Добавлен в контакты');
+  }
+  refreshContactBtn(currentContactId);
+  renderContacts();
+};
 // Загрузка подписки и ника при любом открытии профиля (и из меню, и из нижней вкладки)
 async function loadSubInfo() {
   if (!myId) return;
