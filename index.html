@@ -463,13 +463,6 @@ img { display:block; }
 <body class="dark">
 
 <!-- ЗАСТАВКА -->
-<div id="splash">
-<div class="pl-particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-<div class="pl-heart-wrap">
-<div class="rb-go"><img class="rb-img" src="robot.png" alt=""><span class="rb-hand">👋</span></div>
-</div>
-<div class="pl-logo">Cuber</div>
-</div>
 
 <!-- ЭКРАН АВТОРИЗАЦИИ -->
 <div class="auth-screen" id="authScreen">
@@ -2828,7 +2821,6 @@ $('pvClose').addEventListener('click', () => $('profileViewModal').classList.rem
 
 // ===== ЗАСТАВКА =====
 // Раньше splash скрывался в 3.5 с, ровно когда должна была начаться анимация исчезновения — получался резкий обрыв
-setTimeout(() => { $('splash').style.display = 'none'; }, 3300);
 
 window.addEventListener('resize', () => {
 if (window.innerWidth > 768) {
