@@ -1007,7 +1007,7 @@ document.getElementById('devClose').addEventListener('click', () => {
 async function devCall(body) {
   const msg = document.getElementById('devMsg');
   msg.textContent = 'Выполняю...';
-  const { data, error } = await db.functions.invoke('admin', { body: body });
+  const { data, error } = await db.functions.invoke('Admin', { body: body });
   if (error) msg.textContent = 'Ошибка: ' + error.message;
   else if (data && data.ok) msg.textContent = 'Готово';
   else msg.textContent = 'Ошибка: ' + ((data && data.error) || 'неизвестно');
