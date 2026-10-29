@@ -1235,11 +1235,30 @@ const { data: shared } = await db.from('channels').select('*').contains('members
 return mine;
 }
 
+// Имена владельцев каналов (кэш), чтобы показывать «Владелец: @ник»
+const ownerNames = {};
+async function loadOwnerNames(ids) {
+const need = [...new Set(ids.map(String))].filter(x => x && x !== 'undefined' && !(x in ownerNames));
+if (!need.length) return;
+try {
+const { data } = await db.from('users').select('id, username').in('id', need);
+(data || []).forEach(u => { ownerNames[String(u.id)] = u.username || ''; });
+need.forEach(x => { if (!(x in ownerNames)) ownerNames[x] = ''; });
+} catch (e) {}
+}
+function channelSub(ch) {
+const n = ownerNames[String(ch.user_id)];
+return 'Канал · ' + (n ? '@' + n + ' · ' : '') + (cleanMembers(ch.members).length + 1) + ' подп.';
+}
+const MAX_CHANNELS = 2;
+
 async function createChannelInCloud(name) {
 const id = uid();
 if (!id) { alert('Вы не авторизованы'); return false; }
 const existing = await loadChannelsFromCloud();
 if (existing.some(c => c.name === name)) { alert('Канал с таким названием уже есть'); return false; }
+const owned = existing.filter(c => String(c.user_id) === String(id) && !c.mandatory);
+if (owned.length >= MAX_CHANNELS) { alert('Можно создать не больше ' + MAX_CHANNELS + ' каналов'); return false; }
 const { error } = await db.from('channels').insert({ user_id: id, name: name, description: '' });
 if (error) { alert('Ошибка создания канала: ' + error.message); return false; }
 return true;
@@ -2166,6 +2185,7 @@ const channelLabel = document.createElement('div');
 channelLabel.style.cssText = 'color:#8888aa; font-size:12px; padding:8px 4px 4px 4px; border-bottom:1px solid rgba(255,255,255,0.05); margin-bottom:6px;';
 channelLabel.textContent = '📢 КАНАЛЫ';
 contactList.appendChild(channelLabel);
+await loadOwnerNames(channels.map(c => c.user_id));
 channels.forEach((c) => {
 const div = document.createElement('div');
 div.className = 'contact-item';
@@ -2174,7 +2194,7 @@ div.innerHTML = `
 <div class="avatar" style="background: linear-gradient(135deg, #ff6bb5, #b44cff);">${esc(firstChar)}</div>
 <div class="info">
 <div class="name" style="color:#ff6bb5;">${esc(c.name)}</div>
-<div class="username">Канал</div>
+<div class="username">Владелец: @${esc(ownerNames[String(c.user_id)] || '…')}</div>
 </div>
 <button class="msg-btn" title="Открыть">💬</button>`;
 div.style.cursor = 'pointer';
@@ -2653,8 +2673,9 @@ chatName.textContent = contact;
 showBadge(userId);
 refreshContactBtn(userId);
 setChatAvatar(contact, userId);
-$('chatSub').textContent = userId ? '' : (channel ? 'Канал · ' + (cleanMembers(channel.members).length + 1) + ' подп.' : 'Канал');
+$('chatSub').textContent = userId ? '' : (channel ? channelSub(channel) : 'Канал');
 updateChatSub();
+if (channel && !userId) loadOwnerNames([channel.user_id]).then(() => { if (currentChannel === channel) $('chatSub').textContent = channelSub(channel); });
 input.disabled = false;
 sendBtn.disabled = false;
 input.value = loadDraft(contact);
