@@ -1204,7 +1204,16 @@ channelManageModal.classList.add('active');
 });
 
 // ===== КАНАЛЫ: ОБЛАКО =====
+// Обязательные каналы (mandatory = true) видят все, включая новые аккаунты
 async function loadChannelsFromCloud() {
+const list = await loadChannelsBase();
+try {
+const { data } = await db.from('channels').select('*').eq('mandatory', true);
+(data || []).forEach(c => { if (!list.some(x => String(x.id) === String(c.id))) list.push(c); });
+} catch (e) {}
+return list;
+}
+async function loadChannelsBase() {
 const id = uid();
 if (!id) return [];
 // Основной путь: функция my_channels (владелец или участник), не зависит от правил доступа
@@ -2000,6 +2009,7 @@ function loadDraft(contact) { return localStorage.getItem(draftKey(contact)) || 
 async function sendMessage() {
 const text = input.value.trim();
 if (text === '' || !currentContact) return;
+if (currentChannel && currentChannel.mandatory && !isOwner(currentChannel)) { flash('В этот канал пишет только создатель'); return; }
 if (currentContactId) {
 // Настоящее сообщение человеку: уходит в базу, собеседник его получит
 const me = String(uid());
@@ -2428,6 +2438,7 @@ $('subsModal').classList.add('active');
 async function leaveChannel(target) {
 const ch = target || currentChannel;
 if (!ch || isOwner(ch)) return;
+if (ch.mandatory) { flash('Этот канал нельзя покинуть'); return; }
 if (!confirm('Выйти из канала «' + ch.name + '»?')) return;
 const uname = await getMyUsername();
 const fresh = await getChannelById(ch.id);
